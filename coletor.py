@@ -1,0 +1,706 @@
+"""
+COLETOR DE PREÇOS DA CONCORRÊNCIA | Roma Pneus
+================================================
+O que faz:
+  1. Lê a lista de produtos em produtos_monitorados.csv
+  2. Busca preço e estoque na Pneu Store (lendo o HTML da página)
+  3. Busca preço e estoque na Achei Pneus (pela API GraphQL do site)
+  4. Busca o preço cheio da Roma no site (se tiver o link em url_roma; senão usa a planilha)
+     e calcula PIX e parcelado da Roma (6% de desconto, até 6x)
+  5. Compara Roma x concorrente e classifica cada item
+  6. Salva:
+       - base_concorrencia.xlsx  -> a "foto" atual, que o app do Streamlit lê
+       - historico_precos.csv    -> acumula todas as coletas (para ver a evolução)
+       - historico_promocoes.csv -> promoções e mudanças de preço detectadas em cada coleta
+       - campanhas_atuais.csv e historico_campanhas.csv -> banners e campanhas (campanhas.py)
+       - parcelas_atuais.csv e historico_parcelas.csv -> tabela de 1x a 12x (parcelas.py)
+
+Como usar:
+  No VS Code, clique em ▶️ com este arquivo aberto, ou use o botão
+  "Atualizar preços" dentro do app do Streamlit.
+
+Bibliotecas necessárias (uma vez só, no terminal):
+  python -m pip install curl_cffi beautifulsoup4 pandas openpyxl
+"""
+
+from curl_cffi import requests
+from bs4 import BeautifulSoup
+from datetime import datetime
+import pandas as pd
+import re
+import os
+import time
+
+
+# ============================================================
+# CONFIGURAÇÕES (mude aqui se a política de preço mudar)
+# ============================================================
+
+ARQUIVO_PRODUTOS = "produtos_monitorados.csv"
+ARQUIVO_BASE = "base_concorrencia.xlsx"
+ARQUIVO_HISTORICO = "historico_precos.csv"
+
+DESCONTO_ROMA = 0.06      # 6% em qualquer forma de pagamento
+PARCELAS_ROMA = 6         # até 6x sem juros
+PARCELAS_ACHEI = 12       # Achei Pneus parcela o preço cheio em até 12x
+LIMITE = 0.05             # faixa de +-5% para "Na média"
+PAUSA_SEGUNDOS = 3        # pausa entre páginas, para não sobrecarregar os sites
+
+API_ACHEI = "https://www.acheipneus.com.br/graphql"
+
+
+# ============================================================
+# FUNÇÕES DE APOIO
+# ============================================================
+
+def para_numero(texto):
+    """Converte '1.383,10' (texto) em 1383.10 (número)."""
+    return float(texto.replace(".", "").replace(",", "."))
+
+
+def resultado_vazio():
+    """Dicionário padrão de um concorrente. Tudo começa vazio."""
+    return {
+        "nome_anuncio_concorrente": None,
+        "conc_disponivel": None,
+        "conc_estoque_qtd": None,
+        "conc_preco_cheio": None,
+        "conc_preco_pix": None,
+        "conc_preco_parcelado": None,
+        "conc_n_parcelas": None,
+        "conc_valor_parcela": None,
+    }
+
+
+# ============================================================
+# PNEU STORE: lê o HTML da página do produto
+# ============================================================
+
+def extrair_pneustore(url):
+    """Recebe a URL de um produto da Pneu Store e devolve disponibilidade e preços."""
+    resultado = resultado_vazio()
+    if not (isinstance(url, str) and url.startswith("http")):
+        resultado["conc_disponivel"] = "nao_vende"        # sem link = a Pneu Store não vende este pneu
+        return resultado
+
+    # 1. Baixa a página imitando o Chrome. Até 3 tentativas: às vezes o site
+    #    demora, bloqueia por alguns segundos ou devolve a página incompleta.
+    soup = None
+    for tentativa in range(1, 4):
+        try:
+            resposta = requests.get(url, impersonate="chrome", timeout=20)
+            if resposta.status_code == 200:
+                pagina = BeautifulSoup(resposta.text, "html.parser")
+                tem_preco = pagina.select_one("div[class*='product_in_cash'] h2") is not None
+                sem_estoque = "sem estoque" in pagina.get_text(" ", strip=True).lower()
+                if tem_preco or sem_estoque:
+                    soup = pagina
+                    break
+                motivo = "página veio sem preço e sem aviso de estoque"
+            else:
+                motivo = f"código {resposta.status_code}"
+        except Exception as erro:
+            motivo = str(erro)[:80]
+        print(f"   Pneu Store, tentativa {tentativa} falhou ({motivo})")
+        time.sleep(5 * tentativa)
+
+    if soup is None:
+        print("   Pneu Store: não foi possível ler este pneu. Ele fica como 'Não coletado'.")
+        return resultado
+
+    # 2. Nome do anúncio (o título principal da página)
+    titulo = soup.select_one("h1")
+    if titulo:
+        resultado["nome_anuncio_concorrente"] = titulo.get_text(" ", strip=True)
+
+    # 3. Preço PIX (os centavos ficam em outra tag, por isso tiramos os espaços)
+    pix = soup.select_one("div[class*='product_in_cash'] h2")
+    if pix:
+        texto_pix = re.sub(r"\s+", "", pix.get_text("", strip=True))
+        achou = re.search(r"[\d.]+,\d{2}", texto_pix)
+        if achou:
+            resultado["conc_preco_pix"] = para_numero(achou.group())
+
+    # 4. Disponibilidade: com preço = tem estoque. Sem preço, procura o aviso.
+    if resultado["conc_preco_pix"] is not None:
+        resultado["conc_disponivel"] = "sim"
+    else:
+        texto_pagina = soup.get_text(" ", strip=True).lower()
+        if "sem estoque" in texto_pagina:
+            resultado["conc_disponivel"] = "nao"
+        else:
+            print("   Preço não encontrado e sem aviso de estoque (o layout pode ter mudado)")
+        return resultado
+
+    # 5. Preço "de" (o riscado)
+    cheio = soup.select_one("div[class*='product_prices'] p:first-of-type")
+    if cheio:
+        texto_cheio = re.sub(r"\s+", "", cheio.get_text("", strip=True))
+        achou = re.search(r"[\d.]+,\d{2}", texto_cheio)
+        if achou:
+            resultado["conc_preco_cheio"] = para_numero(achou.group())
+
+    # 6. Parcelado: "ou R$ 383,10 em até 12x de R$ 31,92 sem juros"
+    parcelado = soup.select_one("div[class*='product_in_installments']")
+    if parcelado:
+        texto = parcelado.get_text(" ", strip=True)
+        achou = re.search(r"R\$\s*([\d.]+,\d{2}).*?(\d+)x de R\$\s*([\d.]+,\d{2})", texto)
+        if achou:
+            resultado["conc_preco_parcelado"] = para_numero(achou.group(1))
+            resultado["conc_n_parcelas"] = int(achou.group(2))
+            resultado["conc_valor_parcela"] = para_numero(achou.group(3))
+
+    # 7. Sem preço riscado na página, o preço cheio é o total parcelado
+    if resultado["conc_preco_cheio"] is None:
+        resultado["conc_preco_cheio"] = resultado["conc_preco_parcelado"]
+
+    return resultado
+
+
+# ============================================================
+# ACHEI PNEUS: consulta a API GraphQL do site
+# ============================================================
+# O site da Achei Pneus só carrega com JavaScript, então o HTML vem vazio.
+# Em vez de ler a página, perguntamos direto à API que o próprio site usa.
+# Cada pergunta é pequena (um campo por vez), porque a API recusa
+# algumas combinações de campos numa mesma consulta.
+
+def consultar_achei(sku, campos):
+    """Faz uma consulta à API da Achei Pneus para um SKU e devolve o produto (ou None)."""
+    consulta = '{products(filter:{sku:{eq:"%s"}}){items{%s}}}' % (sku, campos)
+    try:
+        resposta = requests.get(API_ACHEI, params={"query": consulta},
+                                impersonate="chrome", timeout=20)
+        dados = resposta.json()
+    except Exception as erro:
+        print("   Falha ao consultar a Achei Pneus:", erro)
+        return None
+
+    itens = (dados.get("data") or {}).get("products", {}) or {}
+    itens = itens.get("items") or []
+    return itens[0] if itens else None
+
+
+def sku_achei_pelo_link(url):
+    """Descobre o SKU da Achei a partir do link da página (o painel precisa do SKU para a API)."""
+    chave = str(url).split("?")[0].rstrip("/").split("/")[-1].replace(".html", "")
+    consulta = '{products(filter:{url_key:{eq:"%s"}}){items{sku}}}' % chave
+    try:
+        resposta = requests.get(API_ACHEI, params={"query": consulta}, impersonate="chrome", timeout=20)
+        itens = resposta.json()["data"]["products"]["items"]
+        return itens[0]["sku"] if itens else None
+    except Exception:
+        return None
+
+
+def extrair_acheipneus(sku, url=None):
+    """Recebe o SKU (ou o link) da Achei Pneus e devolve disponibilidade, estoque e preços."""
+    url = url if isinstance(url, str) and url.startswith("http") else None
+    resultado = resultado_vazio()
+
+    # Sem SKU e sem link = a Achei não vende este pneu
+    if (pd.isna(sku) or str(sku).strip() == "") and url:
+        sku = sku_achei_pelo_link(url)
+    if pd.isna(sku) or str(sku).strip() == "":
+        resultado["conc_disponivel"] = "nao_vende" if not url else None
+        return resultado
+    sku = str(int(float(sku)))
+
+    # 1. Nome e preço cheio
+    produto = consultar_achei(sku, "name price_with_schema{original_price}")
+    if produto is None:
+        resultado["conc_disponivel"] = "nao"
+        return resultado
+    resultado["nome_anuncio_concorrente"] = produto.get("name")
+    cheio = (produto.get("price_with_schema") or {}).get("original_price")
+
+    # 2. Preço PIX (preço com desconto)
+    produto = consultar_achei(sku, "price_with_schema{price_discount{price percent}}")
+    desconto = ((produto or {}).get("price_with_schema") or {}).get("price_discount") or {}
+    pix = desconto.get("price")
+
+    # 3. Quantidade em estoque
+    produto = consultar_achei(sku, "salableQty")
+    qtd = (produto or {}).get("salableQty")
+
+    # 4. Monta o resultado
+    resultado["conc_estoque_qtd"] = qtd
+    if qtd is not None and qtd <= 0:
+        resultado["conc_disponivel"] = "nao"
+        return resultado
+    resultado["conc_disponivel"] = "sim"
+
+    if cheio:
+        resultado["conc_preco_cheio"] = round(float(cheio), 2)
+        resultado["conc_preco_parcelado"] = round(float(cheio), 2)
+        resultado["conc_n_parcelas"] = PARCELAS_ACHEI
+        resultado["conc_valor_parcela"] = round(float(cheio) / PARCELAS_ACHEI, 2)
+    if pix:
+        resultado["conc_preco_pix"] = round(float(pix), 2)
+
+    return resultado
+
+
+# ============================================================
+# ROMA: busca o preço cheio no próprio site (Magento 2)
+# ============================================================
+# Tentativa 1: API GraphQL do Magento (dados organizados em JSON)
+# Tentativa 2: HTML da página do produto
+# Se as duas falharem, usa o preço digitado em produtos_monitorados.csv
+
+def baixar_com_tentativas(url, tentativas=3, **opcoes):
+    """GET com até 3 tentativas e pausa crescente: evita falha por lentidão momentânea do site."""
+    for n in range(tentativas):
+        try:
+            resposta = requests.get(url, impersonate="chrome", timeout=25, **opcoes)
+            if resposta.status_code == 200:
+                return resposta
+        except Exception:
+            pass
+        time.sleep(2 * (n + 1))
+    return None
+
+
+def roma_por_api(url, sku=None):
+    """Consulta a API do Magento da Roma. Primeiro pelo CÓDIGO do produto (sku), que não erra;
+    se não achar, pelo endereço da página (url_key)."""
+    raiz = "/".join(url.split("/")[:3]) if isinstance(url, str) and url.startswith("http") else "https://romapneus.com.br"
+    campos = ('sku stock_status only_x_left_in_stock '
+              'price_range{minimum_price{regular_price{value} final_price{value}}}')
+    filtros = []
+    if sku and str(sku).strip() not in ("", "nan"):
+        filtros.append('sku:{eq:"%s"}' % str(sku).replace(".0", "").strip())
+    if isinstance(url, str) and url.startswith("http"):
+        filtros.append('url_key:{eq:"%s"}' % url.rstrip("/").split("/")[-1].replace(".html", ""))
+    itens = []
+    for filtro in filtros:
+        resposta = baixar_com_tentativas(raiz + "/graphql", params={"query": "{products(filter:{%s}){items{%s}}}" % (filtro, campos)})
+        if resposta is None:
+            continue
+        try:
+            itens = resposta.json()["data"]["products"]["items"]
+        except Exception:
+            itens = []
+        if itens:
+            break
+    if not itens:
+        return None
+    # Se vier mais de um produto, usa o do SKU da planilha
+    item = next((i for i in itens if sku and str(i.get("sku")) == str(sku)), itens[0])
+    preco = item["price_range"]["minimum_price"]["final_price"]["value"]
+    disponivel = "sim" if item.get("stock_status") == "IN_STOCK" else "nao"
+    return {"preco": float(preco), "disponivel": disponivel,
+            "restam": item.get("only_x_left_in_stock"), "status_api": item.get("stock_status")}
+
+
+def roma_por_html(url):
+    """Lê o preço e o estoque direto do HTML da página da Roma."""
+    resposta = baixar_com_tentativas(url)
+    if resposta is None:
+        return None
+
+    soup = BeautifulSoup(resposta.text, "html.parser")
+    principal = soup.select_one(".product-info-main") or soup
+    preco = None
+
+    # O Magento costuma guardar o preço em três lugares; tenta um por um
+    meta = soup.select_one("meta[property='product:price:amount']")
+    if meta and meta.get("content"):
+        preco = float(meta["content"])
+    if preco is None:
+        tag = principal.select_one("[data-price-type='finalPrice'][data-price-amount]")
+        if tag:
+            preco = float(tag["data-price-amount"])
+    if preco is None:
+        bloco = principal.select_one(".product-info-price .price, .price-box .price")
+        if bloco:
+            achou = re.search(r"[\d.]+,\d{2}", bloco.get_text("", strip=True))
+            if achou:
+                preco = para_numero(achou.group())
+    if preco is None:
+        return None
+
+    # Estoque: olha SÓ o bloco do produto principal (não os produtos relacionados da página).
+    # O Magento marca "stock available" (tem) ou "stock unavailable" (não tem).
+    texto = principal.get_text(" ", strip=True).lower()
+    bloco_estoque = principal.select_one(".stock")
+    if bloco_estoque is not None:
+        classes = " ".join(bloco_estoque.get("class", []))
+        texto_estoque = bloco_estoque.get_text(" ", strip=True).lower()
+        sem = "unavailable" in classes or "fora de estoque" in texto_estoque or "sem estoque" in texto_estoque
+    else:
+        sem = "fora de estoque" in texto or "sem estoque" in texto or "esgotado" in texto
+    # Botão "Comprar" ativo na página = tem estoque
+    botao = principal.select_one("#product-addtocart-button, button.tocart")
+    if botao is not None and not botao.has_attr("disabled"):
+        sem = False
+    return {"preco": preco, "disponivel": "nao" if sem else "sim"}
+
+
+def extrair_roma(produto):
+    """Devolve preço cheio, disponibilidade e a fonte do preço da Roma.
+    Se a API disser 'sem estoque', confere na página antes de acreditar."""
+    url = produto.get("url_roma")
+    tem_url = isinstance(url, str) and url.startswith("http")
+    tem_sku = str(produto.get("sku_roma") or "").strip() not in ("", "nan")
+    if tem_url or tem_sku:
+        api = roma_por_api(url, produto.get("sku_roma"))
+        if api and api["disponivel"] == "nao" and tem_url:
+            pagina = roma_por_html(url)
+            if pagina and pagina["disponivel"] == "sim":
+                api["disponivel"] = "sim"           # a página mostra o botão de compra: vale a página
+        dados = api or (roma_por_html(url) if tem_url else None)
+        if dados:
+            return {"roma_preco_cheio": round(dados["preco"], 2),
+                    "roma_disponivel": dados["disponivel"],
+                    "roma_fonte_preco": "site"}
+        if str(produto.get("no_site_roma", "Sim")) == "Não":
+            print("   Roma: pneu ainda não cadastrado no site")
+        else:
+            print(f"   Roma: não consegui ler o site do item {produto.get('item')} "
+                  "(lentidão ou bloqueio); usando o preço e o estoque da planilha")
+    return {"roma_preco_cheio": produto["roma_preco_cheio"],
+            "roma_disponivel": produto["roma_disponivel"],
+            "roma_fonte_preco": "planilha"}
+
+
+# ============================================================
+# MONTA A BASE NO ESQUEMA DA Base_Consolidada
+# ============================================================
+
+def classificar(linha):
+    """Classificação pelo PIX. Negativo = Roma mais barata."""
+    if linha["conc_disponivel"] == "nao":
+        return "Concorrente sem estoque"
+    if linha["conc_disponivel"] == "nao_vende":
+        return "Concorrente não vende"
+    if pd.isna(linha["dif_pix_pct"]):
+        return "Sem dado"
+    if linha["dif_pix_pct"] < -LIMITE:
+        return "Competitivo"
+    if linha["dif_pix_pct"] > LIMITE:
+        return "Caro"
+    return "Na média"
+
+
+def situacao_estoque(linha):
+    """Cruza o estoque da Roma com o do concorrente."""
+    roma = linha["roma_disponivel"] == "sim"
+    conc = linha["conc_disponivel"] == "sim"
+    if roma and not conc:
+        return "Oportunidade: só a Roma tem"
+    if conc and not roma:
+        return "Risco: só o concorrente tem"
+    if not roma and not conc:
+        return "Ninguém tem"
+    return "Ambos têm"
+
+
+def montar_base(coletado, produtos, roma):
+    """Junta a coleta com os dados da Roma e calcula as comparações."""
+    # Equivalência por loja: "mesmo produto" ou "alternativo (...)"
+    for coluna in ["equivalencia_pneustore", "equivalencia_acheipneus"]:
+        if coluna not in produtos.columns:
+            produtos[coluna] = "mesmo produto"
+        produtos[coluna] = produtos[coluna].fillna("mesmo produto")
+    dados_roma = (produtos[["item", "sku_roma", "equivalencia_pneustore", "equivalencia_acheipneus"]]
+                  .merge(roma, on="item"))
+    base = coletado.merge(dados_roma, on="item", how="left")
+    base["equivalencia"] = base["equivalencia_pneustore"].where(
+        base["concorrente"] == "PneuStore", base["equivalencia_acheipneus"])
+    base = base.drop(columns=["equivalencia_pneustore", "equivalencia_acheipneus"])
+
+    # Preços da Roma a partir do preço cheio
+    base["roma_preco_pix"] = (base["roma_preco_cheio"] * (1 - DESCONTO_ROMA)).round(2)
+    base["roma_preco_parcelado"] = base["roma_preco_pix"]
+    base["roma_n_parcelas"] = PARCELAS_ROMA
+    base["roma_valor_parcela"] = (base["roma_preco_parcelado"] / PARCELAS_ROMA).round(2)
+
+    # Desconto que o concorrente dá sobre o preço cheio dele
+    base["conc_desconto_pix_pct"] = 1 - base["conc_preco_pix"] / base["conc_preco_cheio"]
+    base["conc_desconto_parcelado_pct"] = 1 - base["conc_preco_parcelado"] / base["conc_preco_cheio"]
+
+    # Diferença da Roma contra o concorrente (negativo = Roma mais barata)
+    base["dif_pix_pct"] = base["roma_preco_pix"] / base["conc_preco_pix"] - 1
+    base["dif_parcelado_pct"] = base["roma_preco_parcelado"] / base["conc_preco_parcelado"] - 1
+    base["dif_parcela_pct"] = base["roma_valor_parcela"] / base["conc_valor_parcela"] - 1
+
+    base["classificacao_pix"] = base.apply(classificar, axis=1)
+    base["situacao_estoque"] = base.apply(situacao_estoque, axis=1)
+    base["data_coleta"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    # Inteiros que aceitam vazio (sem o ".0")
+    for coluna in ["conc_n_parcelas", "conc_estoque_qtd"]:
+        base[coluna] = pd.to_numeric(base[coluna], errors="coerce").astype("Int64")
+
+    ordem = ["item", "grupo", "medida", "modelo", "sku_roma", "data_coleta", "concorrente",
+             "equivalencia", "roma_fonte_preco", "roma_disponivel", "conc_disponivel", "conc_estoque_qtd",
+             "situacao_estoque",
+             "roma_preco_cheio", "roma_preco_pix", "roma_preco_parcelado",
+             "roma_n_parcelas", "roma_valor_parcela",
+             "nome_anuncio_concorrente", "conc_preco_cheio", "conc_preco_pix",
+             "conc_preco_parcelado", "conc_n_parcelas", "conc_valor_parcela",
+             "conc_desconto_pix_pct", "conc_desconto_parcelado_pct",
+             "dif_pix_pct", "dif_parcelado_pct", "dif_parcela_pct", "classificacao_pix"]
+    return base[ordem].sort_values(["concorrente", "item"]).reset_index(drop=True)
+
+
+def salvar(base):
+    """Salva a foto atual (sobrescreve) e acrescenta ao histórico (não apaga)."""
+    base.to_excel(ARQUIVO_BASE, sheet_name="Base_Consolidada", index=False)
+
+    ja_existe = os.path.exists(ARQUIVO_HISTORICO)
+    base.to_csv(ARQUIVO_HISTORICO, sep=";", index=False, mode="a",
+                header=not ja_existe, encoding="utf-8-sig")
+
+
+# ============================================================
+# PROMOÇÕES: detecta sinais a cada coleta e guarda o histórico
+# ============================================================
+
+ARQUIVO_PROMOCOES = "historico_promocoes.csv"
+
+
+def formatar_real(valor):
+    if pd.isna(valor):
+        return "—"
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def formatar_pct(valor):
+    if pd.isna(valor):
+        return "—"
+    return f"{valor:+.1%}".replace(".", ",")
+
+
+LIMITE_VARIACAO = 0.02       # mudança de preço a partir de 2% conta como movimentação
+LIMITE_DESCONTO_EXTRA = 0.03 # desconto 3 p.p. acima do normal da loja = promoção
+
+
+def detectar_sinais(atual, hist):
+    """Compara a coleta atual com o normal da loja e com a coleta anterior."""
+    sinais = []
+    atual = atual.copy()
+    if "pneu" not in atual.columns:
+        atual["pneu"] = atual["medida"] + " " + atual["modelo"]
+
+    # 1. Desconto no PIX acima do normal daquela loja (mediana dos descontos da coleta)
+    com_preco = atual[atual["conc_desconto_pix_pct"].notna()]
+    normal = com_preco.groupby("concorrente")["conc_desconto_pix_pct"].median()
+    for _, l in com_preco.iterrows():
+        padrao = normal[l["concorrente"]]
+        if l["conc_desconto_pix_pct"] > padrao + LIMITE_DESCONTO_EXTRA:
+            sinais.append({
+                "concorrente": l["concorrente"], "item": l["item"], "pneu": l["pneu"],
+                "sinal": "🏷️ Desconto acima do normal",
+                "detalhe": f"{l['conc_desconto_pix_pct']:.0%} de desconto no PIX "
+                           f"(o normal da loja é {padrao:.0%})".replace(".", ","),
+            })
+
+    # 2. Mudanças em relação à coleta anterior
+    if not hist.empty and hist["data_coleta"].nunique() >= 2:
+        datas = sorted(hist["data_coleta"].unique())
+        anterior = hist[hist["data_coleta"] == datas[-2]].set_index(["item", "concorrente"]).sort_index()
+        for _, l in atual.iterrows():
+            chave = (l["item"], l["concorrente"])
+            if chave not in anterior.index:
+                continue
+            a = anterior.loc[chave]
+            if isinstance(a, pd.DataFrame):
+                a = a.iloc[0]
+            base_sinal = {"concorrente": l["concorrente"], "item": l["item"], "pneu": l["pneu"]}
+
+            antes, agora = a["conc_preco_pix"], l["conc_preco_pix"]
+            if pd.notna(antes) and pd.notna(agora) and antes > 0:
+                variacao = agora / antes - 1
+                if variacao <= -LIMITE_VARIACAO:
+                    sinais.append({**base_sinal, "sinal": "⬇️ Baixou o preço",
+                                   "detalhe": f"PIX caiu {formatar_pct(abs(variacao))[1:]}: de {formatar_real(antes)} "
+                                              f"para {formatar_real(agora)}"})
+                elif variacao >= LIMITE_VARIACAO:
+                    sinais.append({**base_sinal, "sinal": "⬆️ Subiu o preço",
+                                   "detalhe": f"PIX subiu {formatar_pct(variacao)[1:]}: de {formatar_real(antes)} "
+                                              f"para {formatar_real(agora)}"})
+
+            p_antes, p_agora = a["conc_n_parcelas"], l["conc_n_parcelas"]
+            if pd.notna(p_antes) and pd.notna(p_agora) and int(p_antes) != int(p_agora):
+                sinais.append({**base_sinal, "sinal": "💳 Mudou o parcelamento",
+                               "detalhe": f"De {int(p_antes)}x para {int(p_agora)}x"})
+
+            if a["conc_disponivel"] == "sim" and l["conc_disponivel"] == "nao":
+                sinais.append({**base_sinal, "sinal": "📦 Ficou sem estoque", "detalhe": "Produto esgotou desde a última coleta"})
+            elif a["conc_disponivel"] == "nao" and l["conc_disponivel"] == "sim":
+                sinais.append({**base_sinal, "sinal": "📦 Voltou ao estoque", "detalhe": f"Disponível a {formatar_real(l['conc_preco_pix'])} no PIX"})
+
+    colunas = ["concorrente", "item", "pneu", "sinal", "detalhe"]
+    return pd.DataFrame(sinais, columns=colunas).sort_values(["concorrente", "item"])
+
+
+def registrar_promocoes(base):
+    """Compara a coleta que acabou de ser salva com a anterior e grava os sinais."""
+    hist = pd.read_csv(ARQUIVO_HISTORICO, sep=";", encoding="utf-8-sig")
+    sinais = detectar_sinais(base, hist)
+
+    if not sinais.empty:
+        registro = sinais.assign(data_coleta=base["data_coleta"].iloc[0])
+        registro = registro[["data_coleta", "concorrente", "item", "pneu", "sinal", "detalhe"]]
+        ja_existe = os.path.exists(ARQUIVO_PROMOCOES)
+        registro.to_csv(ARQUIVO_PROMOCOES, sep=";", index=False, mode="a",
+                        header=not ja_existe, encoding="utf-8-sig")
+
+    print()
+    if sinais.empty:
+        print("Promoções: nenhuma promoção ou mudança de preço relevante nesta coleta.")
+    else:
+        print(f"Promoções: {len(sinais)} sinal(is) detectado(s) nesta coleta:")
+        for _, s in sinais.iterrows():
+            print(f"   {s['concorrente']:<12}| {s['pneu']}: {s['sinal'][2:].strip()}. {s['detalhe']}")
+    return sinais
+
+
+# ============================================================
+# EXECUÇÃO
+# ============================================================
+
+def planilha_de_itens():
+    """Procura na pasta a planilha de monitoramento (a conferida tem preferência)."""
+    arquivos = [a for a in os.listdir(".") if a.lower().startswith("base_monitoramento_itens")
+                and a.lower().endswith(".xlsx") and not a.startswith("~$")]
+    conferidas = [a for a in arquivos if "conferida" in a.lower()]
+    escolhidos = conferidas or arquivos
+    return max(escolhidos, key=os.path.getmtime) if escolhidos else None
+
+
+def preparar_lista():
+    """Garante a lista completa: se a lista for a antiga (14 pneus, sem a coluna 'canal'),
+    monta a nova a partir da planilha de monitoramento que estiver na pasta."""
+    antiga = True
+    if os.path.exists(ARQUIVO_PRODUTOS):
+        antiga = "canal" not in pd.read_csv(ARQUIVO_PRODUTOS, sep=";", nrows=1).columns
+    if not antiga:
+        return
+    planilha = planilha_de_itens()
+    if planilha:
+        print(f"A lista de pneus é a antiga. Montando a lista completa a partir de: {planilha}")
+        from gerar_lista import main as gerar
+        gerar(planilha)
+        return
+    if not os.path.exists(ARQUIVO_PRODUTOS):
+        print(f"Não encontrei o {ARQUIVO_PRODUTOS} nem a planilha Base_monitoramento_itens nesta pasta ({os.getcwd()}).")
+        print("   Coloque a planilha de itens (a do Bruno) nesta pasta e rode de novo.")
+        raise SystemExit(1)
+    print("ATENÇÃO: a lista é a antiga (só os 14 pneus). Para coletar todos, coloque a planilha")
+    print("   Base_monitoramento_itens nesta pasta e rode de novo.")
+
+
+def conferir_links(produtos):
+    """Antes de coletar, corrige sozinho o que dá: descobre o SKU da Achei (e troca o link se ele
+    abrir outra medida) e troca link de BUSCA da Pneu Store pelo link do produto.
+    O que for corrigido fica salvo no produtos_monitorados.csv (na próxima vez é instantâneo)."""
+    try:
+        import validar_links as vl
+    except Exception as erro:
+        print("Conferência automática de links indisponível |", erro)
+        return False
+    mudou = False
+    for i, p in produtos.iterrows():
+        nome = p.get("produto") if isinstance(p.get("produto"), str) and p.get("produto") else f'{p["medida"]} {p["modelo"]}'
+        url_ac = p.get("url_acheipneus") if isinstance(p.get("url_acheipneus"), str) else ""
+        sku_ac = p.get("sku_acheipneus")
+        if pd.isna(sku_ac) or str(sku_ac).strip() == "":
+            conf, sugerido, sku = vl.achei(nome, url_ac)
+            if sku:
+                produtos.at[i, "sku_acheipneus"] = str(sku)
+                if sugerido:
+                    produtos.at[i, "url_acheipneus"] = sugerido
+                mudou = True
+                print(f"   Achei     | {p['item']:>2}. {nome[:45]:<45} -> SKU {sku}" + (" (link corrigido)" if sugerido else ""))
+        url_ps = p.get("url_pneustore") if isinstance(p.get("url_pneustore"), str) else ""
+        if url_ps and ("/todos" in url_ps or "?" in url_ps):
+            conf, sugerido = vl.pneustore(nome, url_ps)
+            if sugerido:
+                produtos.at[i, "url_pneustore"] = sugerido
+                mudou = True
+                print(f"   Pneu Store| {p['item']:>2}. {nome[:45]:<45} -> link do produto encontrado")
+    return mudou
+
+
+def coletar():
+    preparar_lista()
+    produtos = pd.read_csv(ARQUIVO_PRODUTOS, sep=";", dtype={"sku_acheipneus": str, "sku_roma": str})
+    if "url_roma" not in produtos.columns:
+        produtos["url_roma"] = None
+    print("Conferindo links (só demora na primeira vez)...")
+    if conferir_links(produtos):
+        produtos.to_csv(ARQUIVO_PRODUTOS, sep=";", index=False, encoding="utf-8-sig")
+    linhas = []
+    roma = []
+
+    print(f"Coletando {len(produtos)} pneus nas 3 lojas (leva alguns minutos)...")
+    for indice, produto in produtos.iterrows():
+        nome = f'{produto["item"]:>2}. {produto["medida"]} {produto["modelo"]}'
+        info = {"item": produto["item"], "grupo": produto["grupo"],
+                "medida": produto["medida"], "modelo": produto["modelo"]}
+
+        print("Roma       |", nome)
+        roma.append({"item": produto["item"], **extrair_roma(produto)})
+        time.sleep(1)
+
+        print("Pneu Store |", nome)
+        linhas.append({**info, "concorrente": "PneuStore",
+                       **extrair_pneustore(produto["url_pneustore"])})
+        time.sleep(PAUSA_SEGUNDOS)
+
+        print("Achei Pneus|", nome)
+        sku_ac = produto["sku_acheipneus"]
+        if (pd.isna(sku_ac) or str(sku_ac).strip() == "") and isinstance(produto.get("url_acheipneus"), str):
+            sku_ac = sku_achei_pelo_link(produto["url_acheipneus"])     # descobre o SKU pelo link
+            produtos.at[indice, "sku_acheipneus"] = sku_ac                # e guarda para as parcelas
+        linhas.append({**info, "concorrente": "Achei Pneus",
+                       **extrair_acheipneus(sku_ac, produto.get("url_acheipneus"))})
+        time.sleep(1)
+
+    base = montar_base(pd.DataFrame(linhas), produtos, pd.DataFrame(roma))
+    salvar(base)
+    sinais = registrar_promocoes(base)
+
+    # Parcelamento de 1x a 12x nas três lojas
+    try:
+        from parcelas import coletar_parcelas
+        coletar_parcelas(base, produtos)
+    except Exception as erro:
+        print("Parcelamento: falha na coleta, preços salvos normalmente |", erro)
+
+    # Campanhas dos concorrentes (banners e categorias de campanha)
+    try:
+        from campanhas import coletar_campanhas
+        _, mudancas_campanhas = coletar_campanhas(base["data_coleta"].iloc[0], produtos)
+    except Exception as erro:
+        print("Campanhas: falha na coleta, preços salvos normalmente |", erro)
+        mudancas_campanhas = pd.DataFrame(columns=["concorrente", "campanha", "tipo", "mudanca"])
+
+    # Vendas faturadas: lê o seu Excel de controle (sem nomes de clientes) e salva vendas.csv
+    try:
+        from vendas import coletar_vendas
+        coletar_vendas()
+    except Exception as erro:
+        print("Vendas: falha na leitura do Excel, preços salvos normalmente |", erro)
+
+    # Dados do site da Roma no GA4 (usuários, páginas, buscas, itens). Precisa da chave em C:\chaves
+    try:
+        from ga4 import coletar_ga4
+        coletar_ga4()
+    except Exception as erro:
+        print("GA4: falha na leitura, preços salvos normalmente |", erro)
+
+    sem_preco = base[(base["conc_disponivel"] == "sim") & base["conc_preco_pix"].isna()]
+    print()
+    print(f"Pronto! {len(base)} comparações salvas em {ARQUIVO_BASE}")
+    if not sem_preco.empty:
+        print("Atenção, disponível mas sem preço (conferir o site):")
+        print(sem_preco[["item", "concorrente", "medida", "modelo"]].to_string(index=False))
+    return base, sinais, mudancas_campanhas
+
+
+if __name__ == "__main__":
+    coletar()

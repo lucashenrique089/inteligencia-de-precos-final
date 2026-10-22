@@ -1,0 +1,119 @@
+MONITOR DE PREÇOS E CAMPANHAS DA CONCORRÊNCIA | Roma Pneus
+=============================================================
+
+ARQUIVOS DO PROJETO
+- app.py                    -> painel no Streamlit (12 abas, veja abaixo)
+- coletor.py                -> coleta tudo: preços, parcelas, estoque, promoções, campanhas, GA4 e vendas
+- campanhas.py              -> lê banners da Pneu Store e campanhas da Achei Pneus (usado pelo coletor)
+- parcelas.py               -> tabela de 1x a 12x da Roma, Pneu Store e Achei Pneus
+                               (se a Pneu Store atualizar o site, veja as instruções no topo do arquivo)
+- ideias.py                 -> ideias de estratégia, biblioteca de pilotos e Black Friday
+- ga4.py                    -> lê o GA4 do site da Roma (usuários, páginas, buscas, itens)
+- vendas.py                 -> lê o seu Excel de vendas faturadas, tira o nome dos clientes e salva vendas.csv
+                               (o caminho do Excel fica em CAMINHO_EXCEL, no topo do arquivo)
+- gerar_secrets.py          -> gera o texto do Secrets do Streamlit Cloud a partir da chave do GA4
+- atualizar_painel.bat      -> roda o coletor e sobe os dados no GitHub com dois cliques
+- teste_ga4.py              -> teste rápido da conexão com o GA4
+- diagnostico.py            -> testa cada fonte de dados com 1 pneu e mostra ✅ ou ❌
+- produtos_monitorados.csv  -> lista dos pneus monitorados (gerada pelo gerar_lista.py)
+- validar_links.py          -> confere os links da planilha de monitoramento e procura os que faltam
+- gerar_lista.py            -> transforma a planilha conferida no produtos_monitorados.csv
+- requirements.txt          -> bibliotecas necessárias
+- .gitignore                -> impede que arquivos .json (a chave do GA4) subam para o GitHub
+- .streamlit/config.toml    -> tema com as cores da Roma (manter a pasta .streamlit com o ponto)
+- imagens/                  -> logo da Roma e selo Goodyear do cabeçalho (subir a pasta para o GitHub)
+
+ABAS DO PAINEL
+- 🏠 Início                              -> explicação do painel, números gerais e consulta de um pneu
+                                            (preço, parcela e estoque nas 3 lojas, com links)
+- 🏆 Mais vendidos                       -> Top 10 pelas vendas (do site ou da Roma), preços lado a lado
+- 🔎 Mais pesquisados                    -> medidas muito buscadas no site
+- 📋 Todos os pneus                      -> tabela completa com filtros e download
+- 💳 Simulador de parcelas               -> total e parcela de 1x a 12x, para 1, 2 ou 4 pneus
+- 📊 Site (GA4)                         -> usuários agora, 7/30 dias x anterior, dia a dia, hora a hora
+                                            (hoje x ontem), canais/origem/campanha, páginas, buscas no
+                                            site, funil de cada pneu (com as vendas faturadas) e Google Ads
+- 💰 Vendas                              -> pedidos, pneus, receita, ticket e conversão real (faturados ÷
+                                            sessões), mês a mês, tamanho do pedido, pneus mais vendidos,
+                                            os 14 monitorados x preço e Google Ads x receita
+- 📈 Histórico de preços                 -> evolução do preço de cada pneu
+- 📣 Promoções                           -> descontos fora do normal, quem baixou/subiu preço, e-mail
+- 📢 Radar de campanhas                  -> banners e campanhas dos concorrentes, novas e encerradas
+- 🖤 Black Friday                        -> contagem regressiva, campanhas BF, movimento de preços,
+                                            alerta de preço maquiado e plano da Roma
+- 💡 Ideias                              -> sugestões de ação, biblioteca de pilotos do mercado e e-mail
+
+PRIMEIRA VEZ (no terminal do VS Code, dentro da pasta)
+  python -m pip install -r requirements.txt
+  python diagnostico.py      (confere se Roma, Pneu Store e Achei Pneus estão respondendo)
+
+ATUALIZAR TUDO
+  Rodar o coletor.py (botão ▶️ no VS Code) ou clicar em "🔄 Atualizar tudo" no app.
+  Uma coleta atualiza TODAS as abas. São criados/atualizados:
+    base_concorrencia.xlsx    -> foto atual dos preços (o app lê este arquivo)
+    historico_precos.csv      -> todas as coletas de preço
+    historico_promocoes.csv   -> promoções e mudanças de preço detectadas
+    campanhas_atuais.csv      -> campanhas no ar hoje
+    historico_campanhas.csv   -> todas as coletas de campanhas
+    parcelas_atuais.csv       -> tabela de 1x a 12x de hoje
+    historico_parcelas.csv    -> todas as coletas de parcelamento
+    ga4_resumo.csv, ga4_diario.csv, ga4_horario.csv, ga4_aquisicao.csv,
+    ga4_paginas.csv, ga4_buscas.csv, ga4_itens.csv,
+    ga4_mensal.csv, ga4_ads.csv, ga4_aquisicao_diaria.csv                      -> dados do site (GA4) e do Google Ads
+    vendas.csv                -> vendas faturadas do seu Excel, SEM nome de cliente
+
+ABRIR O APP NO COMPUTADOR
+  python -m streamlit run app.py
+
+STREAMLIT CLOUD (GitHub)
+  Rodar o coletor no computador e subir no GitHub todos os arquivos, inclusive os gerados pelo coletor (preços, ga4_*.csv e vendas.csv)
+  pelo coletor. Sem eles o app na nuvem abre vazio e os históricos se perdem.
+  Dica: coletar todos os dias até a Black Friday para o gráfico de movimento de preços.
+
+GA4: A CHAVE DO ROBÔ (regra de segurança)
+  - O arquivo .json da chave fica SÓ em C:\chaves. Nunca na pasta do projeto, nunca no GitHub,
+    nunca enviado para ninguém. O .gitignore bloqueia qualquer .json por garantia.
+  - O robô tem acesso de Leitor no GA4 (só lê, não altera nada).
+  - Se a chave vazar: Google Cloud > IAM > Contas de serviço > Chaves > excluir e criar outra.
+
+GA4 E GOOGLE ADS AO VIVO NO STREAMLIT CLOUD (sem rodar o coletor)
+  Com a chave guardada no Secrets, o painel online consulta o GA4 sozinho e renova a cada hora.
+  1. No computador: python gerar_secrets.py  -> cria C:\chaves\secrets_streamlit.toml
+  2. Abrir esse arquivo no Bloco de Notas e copiar tudo
+  3. Streamlit Cloud > seu app > ⋮ > Settings > Secrets > colar > Save
+  A chave fica só no cofre do Streamlit: NUNCA no GitHub nem na pasta do projeto.
+
+ATUALIZAR PREÇOS E VENDAS AUTOMATICAMENTE (atualizar_painel.bat)
+  Dois cliques no atualizar_painel.bat: roda o coletor e sobe os dados no GitHub.
+  Precisa do Git instalado e da pasta ligada ao repositório (git clone) com login feito.
+  Para rodar sozinho todo dia: Agendador de Tarefas do Windows > Criar Tarefa Básica >
+  Diariamente, 8h > Iniciar um programa > escolher o atualizar_painel.bat.
+  O computador precisa estar ligado nesse horário.
+
+VENDAS (seu Excel de faturados)
+  - O Excel continua no Y: e você atualiza como sempre (só faturados, cancelados retirados).
+  - A cada coleta, o vendas.py lê o Excel e grava o vendas.csv SEM a coluna de nome do cliente.
+  - Nunca copie o Excel original para a pasta do projeto nem para o GitHub (tem nome de cliente).
+  - Se o Excel mudar de lugar ou de nome, ajuste CAMINHO_EXCEL no topo do vendas.py.
+  - Compras e receita do GA4 não são usadas: o número oficial é o seu controle.
+
+GOOGLE ADS (pelo GA4, sem chave nova)
+  - O custo, os cliques e as impressões chegam pelo GA4 quando o Google Ads está VINCULADO:
+    GA4 > Administrador > Vinculações de produtos > Vinculações do Google Ads.
+  - Se aparecer "Google Ads: sem dados de custo" no terminal, o vínculo não existe ou é recente.
+  - Para ver resultado por produto do Shopping, o caminho é a API do Google Ads (precisa de
+    token de desenvolvedor aprovado pelo Google). Fica para uma próxima etapa.
+
+LISTA DE PNEUS (versão 7: ~70 pneus do varejo e da distribuição)
+  1. Preencha/atualize a planilha Base_monitoramento_itens.xlsx (aba Itens) na pasta do projeto.
+  2. python validar_links.py "Base_monitoramento_itens.xlsx"
+     -> entra nos 3 sites, confere cada link e sugere os que faltam.
+     -> gera Base_monitoramento_itens_conferida.xlsx (colunas de Conferência e Link sugerido).
+  3. Revise as linhas que não estão "ok". Se um link sugerido estiver errado, apague-o.
+  4. python gerar_lista.py
+     -> cria o produtos_monitorados.csv novo (guarda o anterior como produtos_monitorados_backup.csv).
+     -> os 14 pneus antigos mantêm o número, para o histórico de preços continuar.
+  5. Rode o coletor normalmente. Com ~70 pneus a coleta leva de 10 a 15 minutos.
+  6. Suba no GitHub o produtos_monitorados.csv junto com os arquivos de dados.
+  A Roma é lida pelo CÓDIGO do produto (mais confiável que o link). Pneu sem link no concorrente
+  aparece como "Não vende". Pneu fora do site da Roma aparece como "Fora do site".
