@@ -1,13 +1,4 @@
 ﻿data;campanha;tipo_campanha;custo;cliques;impressoes
-2025-09-17;[L] [PMAX Geral];Performance Max;40.971528;34.0;1948.0
-2025-09-17;[L][PMAX][VISITAS GG MEU NEGÓCIO];Performance Max;26.211234;33.0;20650.0
-2025-09-17;[Search] [Leads] [LP] - Aros | TESTE WHATSAPP;Search;73.267098;20.0;443.0
-2025-09-17;[Search] [Leads] [LP] - Institucional;Search;71.003204;34.0;133.0
-2025-09-17;[Search] [Leads] [LP] - Pneus Goodyear;Search;79.800623;18.0;272.0
-2025-09-17;[Search] [leads] [LP]  - Compra Online;Search;132.916248;28.0;585.0
-2025-09-17;[Search] [leads] [LP] - Campanha Lojas;Search;101.529755;38.0;80.0
-2025-09-17;[VENDAS] [PMAX GERAL]  [Goodyear];Performance Max;52.866646;60.0;1347.0
-2025-09-17;[search] [leads] [LP] - Aro 15 e 16;Search;70.356955;14.0;363.0
 2025-09-18;[L] [PMAX Geral];Performance Max;19.648171;16.0;1050.0
 2025-09-18;[L][PMAX][VISITAS GG MEU NEGÓCIO];Performance Max;27.882196;33.0;19438.0
 2025-09-18;[Search] [Leads] [LP] - Aros | TESTE WHATSAPP;Search;84.348997;14.0;356.0
@@ -3787,7 +3778,7 @@
 2026-10-15;[LOJA Guarulhos] [Search] [Leads] [LP] - Pneus Goodyear;Search;58.470643;13.0;238.0
 2026-10-15;[LOJA LAPA] [Search] [Leads] [LP] - Pneus Goodyear;Search;53.248329;11.0;187.0
 2026-10-15;[LOJA PATRIARCA] [Search] [Leads] [LP] - Pneus Goodyear;Search;64.780561;20.0;295.0
-2026-10-15;[L][PMAX][VISITAS GG MEU NEGÓCIO];Performance Max;75.367347;27.0;23051.0
+2026-10-15;[L][PMAX][VISITAS GG MEU NEGÓCIO];Performance Max;75.366821;27.0;23050.0
 2026-10-15;[Search] [Leads] [LP] - Aros | TESTE WHATSAPP;Search;73.58241;37.0;768.0
 2026-10-15;[Search] [Leads] [LP] - Institucional;Search;182.537808;21.0;315.0
 2026-10-15;[Search] [Leads] [LP] - Pneus Goodyear;Search;258.934365;83.0;1284.0
@@ -3795,7 +3786,7 @@
 2026-10-15;[Search] [leads] [LP]  - Barato/Promoção/Oferta;Search;67.927476;17.0;243.0
 2026-10-15;[Search] [leads] [LP]  - Compra Online;Search;110.955113;29.0;533.0
 2026-10-15;[Search] [leads] [LP] - Campanha Lojas;Search;76.410764;5.0;69.0
-2026-10-15;[Shopping] [catálogo] - Site E-commerce;Shopping;52.39;137.0;5418.0
+2026-10-15;[Shopping] [catálogo] - Site E-commerce;Shopping;52.39;137.0;5417.0
 2026-10-15;[search] [leads] [LP] - Aro 15 e 16;Search;44.113045;15.0;639.0
 2026-10-16;[LOJA Guarulhos] [Search] [Leads] [LP] - Pneus Goodyear;Search;59.10465;10.0;277.0
 2026-10-16;[LOJA LAPA] [Search] [Leads] [LP] - Pneus Goodyear;Search;51.083495;13.0;299.0
@@ -3811,19 +3802,19 @@
 2026-10-16;[Shopping] [catálogo] - Site E-commerce;Shopping;42.36;107.0;4812.0
 2026-10-16;[search] [leads] [LP] - Aro 15 e 16;Search;57.809156;24.0;614.0
 2026-10-17;[LOJA Guarulhos] [Search] [Leads] [LP] - Pneus Goodyear;Search;18.086539;6.0;213.0
-2026-10-17;[LOJA LAPA] [Search] [Leads] [LP] - Pneus Goodyear;Search;72.445457;14.0;290.0
+2026-10-17;[LOJA LAPA] [Search] [Leads] [LP] - Pneus Goodyear;Search;72.445457;14.0;289.0
 2026-10-17;[LOJA PATRIARCA] [Search] [Leads] [LP] - Pneus Goodyear;Search;68.140276;16.0;219.0
 2026-10-17;[L][PMAX][VISITAS GG MEU NEGÓCIO];Performance Max;77.067718;32.0;26382.0
-2026-10-17;[Search] [Leads] [LP] - Aros | TESTE WHATSAPP;Search;42.307648;21.0;311.0
+2026-10-17;[Search] [Leads] [LP] - Aros | TESTE WHATSAPP;Search;42.307648;21.0;309.0
 2026-10-17;[Search] [Leads] [LP] - Institucional;Search;159.07744;16.0;390.0
 2026-10-17;[Search] [Leads] [LP] - Pneus Goodyear;Search;36.51593;15.0;231.0
 2026-10-17;[Search] [Leads] [LP] - Serviços;Search;24.708544;18.0;408.0
 2026-10-17;[Search] [leads] [LP]  - Barato/Promoção/Oferta;Search;61.767102;20.0;433.0
 2026-10-17;[Search] [leads] [LP]  - Compra Online;Search;98.132156;32.0;689.0
 2026-10-17;[Search] [leads] [LP] - Campanha Lojas;Search;88.665084;11.0;46.0
-2026-10-17;[Shopping] [catálogo] - Site E-commerce;Shopping;53.12;131.0;6275.0
+2026-10-17;[Shopping] [catálogo] - Site E-commerce;Shopping;53.12;131.0;6269.0
 2026-10-17;[search] [leads] [LP] - Aro 15 e 16;Search;32.370093;13.0;176.0
-2026-10-18;[Shopping] [catálogo] - Site E-commerce;Shopping;45.66;116.0;5088.0
+2026-10-18;[Shopping] [catálogo] - Site E-commerce;Shopping;45.66;116.0;5087.0
 2026-10-19;[LOJA Guarulhos] [Search] [Leads] [LP] - Pneus Goodyear;Search;89.443507;14.0;464.0
 2026-10-19;[LOJA LAPA] [Search] [Leads] [LP] - Pneus Goodyear;Search;39.058901;8.0;365.0
 2026-10-19;[LOJA PATRIARCA] [Search] [Leads] [LP] - Pneus Goodyear;Search;54.120307;11.0;176.0
@@ -3863,3 +3854,16 @@
 2026-10-21;[Search] [leads] [LP] - Campanha Lojas;Search;88.87821;13.0;48.0
 2026-10-21;[Shopping] [catálogo] - Site E-commerce;Shopping;120.32;242.0;10653.0
 2026-10-21;[search] [leads] [LP] - Aro 15 e 16;Search;70.187723;10.0;188.0
+2026-10-22;[LOJA Guarulhos] [Search] [Leads] [LP] - Pneus Goodyear;Search;52.286978;10.0;222.0
+2026-10-22;[LOJA LAPA] [Search] [Leads] [LP] - Pneus Goodyear;Search;46.677486;9.0;122.0
+2026-10-22;[LOJA PATRIARCA] [Search] [Leads] [LP] - Pneus Goodyear;Search;54.267656;12.0;218.0
+2026-10-22;[L][PMAX][VISITAS GG MEU NEGÓCIO];Performance Max;70.594731;28.0;24844.0
+2026-10-22;[Search] [Leads] [LP] - Aros | TESTE WHATSAPP;Search;76.220982;33.0;591.0
+2026-10-22;[Search] [Leads] [LP] - Institucional;Search;130.790422;19.0;460.0
+2026-10-22;[Search] [Leads] [LP] - Pneus Goodyear;Search;142.766352;41.0;743.0
+2026-10-22;[Search] [Leads] [LP] - Serviços;Search;54.93559;23.0;407.0
+2026-10-22;[Search] [leads] [LP]  - Barato/Promoção/Oferta;Search;66.7126;12.0;167.0
+2026-10-22;[Search] [leads] [LP]  - Compra Online;Search;89.762803;20.0;324.0
+2026-10-22;[Search] [leads] [LP] - Campanha Lojas;Search;67.226027;12.0;149.0
+2026-10-22;[Shopping] [catálogo] - Site E-commerce;Shopping;159.88;289.0;14716.0
+2026-10-22;[search] [leads] [LP] - Aro 15 e 16;Search;69.065982;20.0;314.0
